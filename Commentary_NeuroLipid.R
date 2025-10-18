@@ -284,24 +284,33 @@ print(tot_neut, n = Inf)
 
 
 #### PCA — different lipid classes, testing 3 normalizations (PQN / SUM / CLR) ####
+
 neu <- read.csv("CSV_lipidomics/Merge_neurolipid.csv", check.names = FALSE) %>%
   mutate(
-    Tissue       = str_squish(Tissue),
-    Diagnosis    = str_squish(Diagnosis),
-    Diagnosis_up = toupper(Diagnosis),
-    Condition = case_when(
-      Source == "AD"  & Diagnosis_up == "CONTROL" & Tissue == "PFC (grey)"  ~ "PFC (grey)",
-      Source == "AD"  & Diagnosis_up == "CONTROL" & Tissue == "PFC (white)" ~ "PFC (white)",
-      Source == "FTD" & Diagnosis_up %in% c("FTD","FTLD") & Tissue == "PFC (grey)" ~ "FTLD (PFC grey)",
-      Source == "AD"  & Diagnosis_up == "AD"     & Tissue == "PFC (grey)"  ~ "AD (PFC grey)",
-      Source == "AD"  & Diagnosis_up == "AD"     & Tissue == "PFC (white)" ~ "AD (PFC white)",
+    Tissue       = stringr::str_squish(Tissue),
+    Diagnosis    = stringr::str_squish(Diagnosis),
+    Diagnosis_up = toupper(Diagnosis)
+  ) %>%
+  # --- NEW: drop Cerebellum entirely ---
+  dplyr::filter(!grepl("(?i)cerebell", Tissue)) %>%
+  # --- UPDATED: label FTLD controls explicitly ---
+  mutate(
+    Condition = dplyr::case_when(
+      Source == "AD"  & Diagnosis_up == "CONTROL" & Tissue == "PFC (grey)"  ~ "PFC grey Control",
+      Source == "AD"  & Diagnosis_up == "CONTROL" & Tissue == "PFC (white)" ~ "PFC white Control",
+      Source == "FTD" & Diagnosis_up %in% c("FTD","FTLD") & Tissue == "PFC (grey)" ~ "PFC grey FTLD",
+      Source == "FTD" & Diagnosis_up == "CONTROL" & Tissue %in% c("PFC (grey)","PFC (white)") ~ "PFC grey Control1",
+      Source == "AD"  & Diagnosis_up == "AD"     & Tissue == "PFC (grey)"  ~ "PFC grey AD",
+      Source == "AD"  & Diagnosis_up == "AD"     & Tissue == "PFC (white)" ~ "PFC white AD",
       Source == "iNeuron-I"  ~ "iNeuron-I",
       Source == "iNeuron-II" ~ "iNeuron-II",
       TRUE ~ NA_character_
     )
   )
-# If you want to exclude NA conditions, uncomment:
-# neu <- neu %>% filter(!is.na(Condition))
+
+#if want to exclude any conditions in plot, do this:
+#neu <- neu %>% dplyr::filter(Condition != "PFC grey Control1")
+
 
 meta_cols <- intersect(c(
   "Tissue","Diagnosis","Diagnosis_up","Genotype_AD","Genotype_FTD","Genotype",
@@ -331,21 +340,41 @@ subsets <- list(
   Ether   = list(cols = gpl_ether,    stub = "PCA_ether",         title = "Ether phospholipids")
 )
 
-pref <- c("PFC (grey)", "AD (PFC grey)", "FTLD (PFC grey)",
+# --- UPDATED: include FTLD control in preferred legend order ---
+pref <- c("PFC (grey)", "AD (PFC grey)", "FTLD (PFC grey)", "FTLD control",
           "PFC (white)", "AD (PFC white)", "iNeuron-I", "iNeuron-II")
 present <- intersect(pref, unique(neu$Condition))
 extras  <- setdiff(unique(neu$Condition), present)
 cond_order <- c(present, sort(extras))
 
+# --- UPDATED: add a dedicated light grey for FTLD control ---
+#base_cols <- c(
+#  "PFC (grey)"      = "#7FB3D5",
+#  "AD (PFC grey)"   = "#3F88C5",
+#  "FTLD (PFC grey)" = "#1F5AA6",
+#  "FTLD control"    = "#B0B0B0",   # light grey for FTLD controls
+#  "PFC (white)"     = "#7FC8A9",
+#  "AD (PFC white)"  = "#2CA25F",
+#  "iNeuron-I"       = "#F3A530",
+#  "iNeuron-II"      = "#D97A00"
+#)
 base_cols <- c(
-  "PFC (grey)"      = "#7FB3D5",
-  "AD (PFC grey)"   = "#3F88C5",
-  "FTLD (PFC grey)" = "#1F5AA6",
-  "PFC (white)"     = "#7FC8A9",
-  "AD (PFC white)"  = "#2CA25F",
-  "iNeuron-I"       = "#F3A530",
-  "iNeuron-II"      = "#D97A00"
+  # Grey matter (controls lighter, disease darker)
+  "PFC grey Control"      = "#56B4E9",  # light blue (control)
+  "PFC grey AD"   = "#0072B2",  # dark blue (AD)
+  "PFC grey FTLD" = "#B2ABD2",  # purple (FTLD case)
+  "PFC grey Control1"    = "#CC79A7",  # light lavender (FTLD control)
+  
+  # White matter (greenish)
+  "PFC white Control"     = "#7BC8B3",  # lighter teal/green (control)
+  "PFC white AD"  = "#009E73",  # darker bluish-green (AD)
+  
+  # iPSC / iNeuron lines (oranges)
+  "iNeuron-I"       = "#E69F00",  # orange
+  "iNeuron-II"      = "#D55E00"   # vermilion
 )
+
+
 missing <- setdiff(cond_order, names(base_cols))
 cond_colors <- c(base_cols, setNames(rep("#777777", length(missing)), missing))
 cond_colors <- cond_colors[cond_order]
@@ -521,6 +550,27 @@ run_pca_norm <- function(methods = c("pqn","sum","clr"), ref = "median", ref_vec
       names(scores) <- c("PC1","PC2")
       scores$Condition <- cond_vec
       
+      # ---- (optional) quick diagnostics for NA color points ----
+      diag_cols <- intersect(c(
+        "Source","Tissue","Diagnosis","Diagnosis_up",
+        "APOE","Genotype","Genotype_AD","Genotype_FTD",
+        "Subject","Subject_ID","Sample","Sample_ID","ID",
+        "Region","Area","Batch","Plate","Well","Lab","Notes","Comment"
+      ), names(neu))
+      kept_meta <- neu[S$keep_rows, diag_cols, drop = FALSE]
+      diag_df <- kept_meta %>%
+        dplyr::mutate(Condition = as.character(cond_vec)) %>%
+        dplyr::bind_cols(scores[, c("PC1","PC2")])
+      grey_df <- diag_df %>% dplyr::filter(is.na(Condition))
+      message(sprintf("[Diag] Grey points in %s / %s: %d", sname, toupper(m), nrow(grey_df)))
+      if (nrow(grey_df) > 0) {
+        readr::write_csv(
+          grey_df,
+          file.path(outdir, paste0(subsets[[sname]]$stub, "_", toupper(m), "_GREY_points_metadata.csv"))
+        )
+      }
+      # ---- end diagnostics ----
+      
       # Title override (typo-proof)
       pretty_titles <- c(GPL = "Phospholipids", Ether = "Ether lipids",
                          Neutral = "Neutral lipids", Sphingo = "Sphingolipids")
@@ -528,32 +578,32 @@ run_pca_norm <- function(methods = c("pqn","sum","clr"), ref = "median", ref_vec
       title_safe <- if (sname %in% names(pretty_titles)) pretty_titles[[sname]] else
         if (is.character(title_raw) && nzchar(title_raw)) title_raw else sname
       
-      p <- ggplot(scores, aes(PC1, PC2, color = Condition)) +
-        geom_point(size = 2.8, alpha = 0.9) +
-        scale_color_manual(values = cond_colors, limits = cond_order, breaks = cond_order, drop = FALSE, name = NULL) +
-        labs(x = pc12_lab, y = pc22_lab, title = paste0(title_safe, " — ", toupper(m))) +
-        theme(
-          panel.background = element_rect(fill = "white", colour = NA),
-          plot.background  = element_rect(fill = "white", colour = NA),
-          panel.grid       = element_blank(),
-          axis.ticks       = element_blank(),
-          axis.text.x      = element_blank(),
-          axis.text.y      = element_blank(),
-          plot.title       = element_text(size = 26, color = "black", face = "plain"),
-          axis.title.x     = element_text(size = 28, color = "black", face = "plain", margin = margin(t = 8)),
-          axis.title.y     = element_text(size = 28, color = "black", face = "plain", margin = margin(r = 8)),
-          legend.background= element_rect(fill = "white", colour = NA),
-          legend.key       = element_rect(fill = "white", colour = NA),
-          legend.position  = "right"
+      p <- ggplot2::ggplot(scores, ggplot2::aes(PC1, PC2, color = Condition)) +
+        ggplot2::geom_point(size = 2.8, alpha = 0.9) +
+        ggplot2::scale_color_manual(values = cond_colors, limits = cond_order, breaks = cond_order, drop = FALSE, name = NULL) +
+        ggplot2::labs(x = pc12_lab, y = pc22_lab, title = paste0(title_safe, " — ", toupper(m))) +
+        ggplot2::theme(
+          panel.background = ggplot2::element_rect(fill = "white", colour = NA),
+          plot.background  = ggplot2::element_rect(fill = "white", colour = NA),
+          panel.grid       = ggplot2::element_blank(),
+          axis.ticks       = ggplot2::element_blank(),
+          axis.text.x      = ggplot2::element_blank(),
+          axis.text.y      = ggplot2::element_blank(),
+          plot.title       = ggplot2::element_text(size = 26, color = "black", face = "plain"),
+          axis.title.x     = ggplot2::element_text(size = 28, color = "black", face = "plain", margin = ggplot2::margin(t = 8)),
+          axis.title.y     = ggplot2::element_text(size = 28, color = "black", face = "plain", margin = ggplot2::margin(r = 8)),
+          legend.background= ggplot2::element_rect(fill = "white", colour = NA),
+          legend.key       = ggplot2::element_rect(fill = "white", colour = NA),
+          legend.position  = "none"
         )
       
       pngfile <- file.path(outdir, paste0(subsets[[sname]]$stub, "_", toupper(m), "_pc1_pc2.png"))
-      ggsave(pngfile, p, width = 5, height = 5, dpi = 300)
+      ggplot2::ggsave(pngfile, p, width = 5, height = 5, dpi = 300)
       print(p)
       
-      load_pc1 <- tibble(Feature = colnames(Z), PC1_Loading = pc$rotation[, 1]) %>%
-        mutate(Abs_PC1 = abs(PC1_Loading)) %>%
-        arrange(desc(Abs_PC1))
+      load_pc1 <- tibble::tibble(Feature = colnames(Z), PC1_Loading = pc$rotation[, 1]) %>%
+        dplyr::mutate(Abs_PC1 = abs(PC1_Loading)) %>%
+        dplyr::arrange(dplyr::desc(Abs_PC1))
       readr::write_csv(head(load_pc1, 10),
                        file.path(outdir, paste0(subsets[[sname]]$stub, "_", toupper(m), "_top10_PC1.csv")))
       readr::write_csv(load_pc1,
@@ -563,12 +613,12 @@ run_pca_norm <- function(methods = c("pqn","sum","clr"), ref = "median", ref_vec
 }
 
 theme_set(theme_get() + theme(
-  legend.text  = element_text(size = 12),  # <-- bigger legend labels
-  legend.key.size = unit(6, "pt")         # optional: bigger keys
+  legend.text  = element_text(size = 12),  # bigger legend labels
+  legend.key.size = unit(6, "pt")
 ))
 
+# Run
 run_pca_norm(methods = c("pqn","sum","clr"), ref = "median")
-
 
 #### DHA % plotting  ####
 
