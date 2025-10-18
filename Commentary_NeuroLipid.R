@@ -176,7 +176,7 @@ neu <- read_csv(merged_path, show_col_types = FALSE) %>%
       Source == "AD"  & Diagnosis_up == "AD"     & Tissue == "PFC (grey)"  ~ "AD (PFC grey)",
       Source == "AD"  & Diagnosis_up == "AD"     & Tissue == "PFC (white)" ~ "AD (PFC white)",
       Source == "iNeuron-I"  ~ "iNeuron-I",
-      Source == "iNeuron-II" ~ "iNeuron-II",
+      Source == "iNeuron-II"  & Tissue == "Neuron-II"~ "iNeuron-II",
       TRUE ~ NA_character_
     )
   ) %>% filter(!is.na(Condition))
@@ -303,7 +303,9 @@ neu <- read.csv("CSV_lipidomics/Merge_neurolipid.csv", check.names = FALSE) %>%
       Source == "AD"  & Diagnosis_up == "AD"     & Tissue == "PFC (grey)"  ~ "PFC grey AD",
       Source == "AD"  & Diagnosis_up == "AD"     & Tissue == "PFC (white)" ~ "PFC white AD",
       Source == "iNeuron-I"  ~ "iNeuron-I",
-      Source == "iNeuron-II" ~ "iNeuron-II",
+      Source == "iNeuron-II"  & Tissue ==  "iNeuron-II" ~ "iNeuron-II",
+      Source == "iAstrocyte"  & Tissue == "iAstrocyte" ~ "iAstrocyte-II",
+      Source == "iMicroglia"  & Tissue == "iMicroglia" ~ "iMicroglia-II",
       TRUE ~ NA_character_
     )
   )
@@ -371,13 +373,64 @@ base_cols <- c(
   
   # iPSC / iNeuron lines (oranges)
   "iNeuron-I"       = "#E69F00",  # orange
-  "iNeuron-II"      = "#D55E00"   # vermilion
+  "iNeuron-II"      = "#D55E00"  , # vermilion
+  "iAstrocyte-II"      = "red3",   # vermilion
+  "iMicroglia-II" = "red"
 )
 
 
 missing <- setdiff(cond_order, names(base_cols))
 cond_colors <- c(base_cols, setNames(rep("#777777", length(missing)), missing))
 cond_colors <- cond_colors[cond_order]
+
+save_unified_legend <- function(outdir, cond_order, cond_colors, ncol = 1, legend_title = NULL) {
+  if (!requireNamespace("cowplot", quietly = TRUE)) {
+    stop("Please install cowplot: install.packages('cowplot')")
+  }
+  df_leg <- data.frame(
+    x = 1,
+    y = 1,
+    Condition = factor(cond_order, levels = cond_order)
+  )
+  
+  p_leg <- ggplot2::ggplot(df_leg, ggplot2::aes(x, y, color = Condition)) +
+    ggplot2::geom_point(size = 3) +
+    ggplot2::scale_color_manual(
+      values = cond_colors,
+      limits = cond_order,
+      breaks = cond_order,
+      drop   = FALSE,
+      name   = legend_title
+    ) +
+    ggplot2::guides(
+      color = ggplot2::guide_legend(
+        ncol = ncol,
+        override.aes = list(size = 4, alpha = 1),
+        title.position = "top"
+      )
+    ) +
+    ggplot2::theme_void() +
+    ggplot2::theme(
+      legend.position = "right",
+      legend.title = ggplot2::element_text(size = 14),
+      legend.text  = ggplot2::element_text(size = 12),
+      legend.key.size = grid::unit(6, "pt")
+    )
+  
+  leg_grob <- cowplot::get_legend(p_leg)
+  leg_plot <- cowplot::ggdraw(leg_grob)
+  
+  # Height scales a bit with # of entries; tweak if needed
+  h <- max(1.5, 0.28 * length(cond_order))
+  ggplot2::ggsave(
+    filename = file.path(outdir, "PCA_UNIFIED_LEGEND.png"),
+    plot     = leg_plot,
+    width    = 3.5,
+    height   = h,
+    dpi      = 300
+  )
+}
+
 
 sanitize_for_pca <- function(Z, max_na_frac_col = 0.98, nzv_eps = 1e-12) {
   Z <- as.matrix(Z)
@@ -504,7 +557,9 @@ normalize_block <- function(X, method = c("clr","pqn","median","sum","percent","
 
 run_pca_norm <- function(methods = c("pqn","sum","clr"), ref = "median", ref_vector = NULL) {
   
-  outdir <- "Graphs/2025/PUFA_Paper/Commentary/PCA_norms"
+  outdir <- "Graphs/2025/PUFA_Paper/Commentary/Graph/PCA_norms"
+  save_unified_legend(outdir, cond_order = cond_order, cond_colors = cond_colors, ncol = 1, legend_title = NULL)
+  
   dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
   
   for (sname in names(subsets)) {
